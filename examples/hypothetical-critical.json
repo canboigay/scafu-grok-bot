@@ -17,7 +17,7 @@
    "severity": "critical",
    "title": "Publicly downloadable database backup",
    "description": "A SQL dump is directly downloadable from the web root.",
-   "evidence": "GET https://example-shop.test/backup/db-2026-10-01.sql  \u2192  200 (412 MB, application/sql)",
+   "evidence": "GET https://example-shop.test/backup/db-2026-10-01.sql  →  200 (412 MB, application/sql)",
    "impact": "Full customer data, including password hashes, can be downloaded by anyone.",
    "remediation": [
     "Remove the file and block /backup/ at the web server.",
@@ -29,7 +29,7 @@
    "severity": "high",
    "title": "Exposed .git directory",
    "description": "The .git directory is readable over HTTPS, exposing source history.",
-   "evidence": "GET /.git/HEAD  \u2192  200  \"ref: refs/heads/main\"",
+   "evidence": "GET /.git/HEAD  →  200  \"ref: refs/heads/main\"",
    "impact": "Source code and any committed secrets can be reconstructed.",
    "remediation": [
     "Deny access to /.git/ at the web server.",
@@ -77,7 +77,7 @@
    ],
    "title": "nginx 1.18.0 may be affected by CVE-2021-23017 (resolver off-by-one)",
    "description": "The Server header reports nginx/1.18.0, a version listed as affected by CVE-2021-23017. Distribution backports are common, so the version string alone does not prove the host is vulnerable.",
-   "evidence": "Server: nginx/1.18.0 (Ubuntu)\nNVD: CVE-2021-23017, CVSS 7.7 (High), affects nginx 0.6.18\u20131.20.0",
+   "evidence": "Server: nginx/1.18.0 (Ubuntu)\nNVD: CVE-2021-23017, CVSS 7.7 (High), affects nginx 0.6.18–1.20.0",
    "impact": "If the resolver directive is in use and the package is unpatched, a crafted DNS response could crash a worker or worse.",
    "remediation": [
     "Confirm the installed package version with the host owner (apt policy nginx).",
@@ -139,19 +139,94 @@
  ],
  "check_log": [
   {
-   "check": "DNS and RDAP lookups",
+   "id": "dns_records",
+   "check": "DNS records (A, AAAA, MX, NS, TXT)",
    "status": "ok",
    "detail": "EXAMPLE DATA"
   },
   {
-   "check": "TLS handshake",
+   "id": "caa",
+   "check": "CAA records",
    "status": "ok",
-   "detail": "Certificate expired (H-02)."
+   "detail": "EXAMPLE DATA"
   },
   {
-   "check": "Subdomain enumeration via CT",
+   "id": "spf",
+   "check": "SPF record",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "dkim",
+   "check": "DKIM (common selectors)",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "dmarc",
+   "check": "DMARC policy",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "mta_sts_tlsrpt",
+   "check": "MTA-STS / TLS-RPT",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "dnssec",
+   "check": "DNSSEC",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "tls_cert",
+   "check": "TLS certificate",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "tls_versions",
+   "check": "TLS protocol versions",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "ct_subdomains",
+   "check": "Certificate Transparency names",
    "status": "failed",
    "detail": "crt.sh timed out after 3 retries (EXAMPLE DATA)."
+  },
+  {
+   "id": "http_headers",
+   "check": "HTTPS security headers",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "https_redirect",
+   "check": "HTTP to HTTPS redirect",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "robots_security_txt",
+   "check": "robots.txt and security.txt",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "rdap",
+   "check": "Registry RDAP",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "fingerprint",
+   "check": "Technology fingerprint",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
   }
  ]
 }

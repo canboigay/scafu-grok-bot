@@ -1,1 +1,98 @@
-{"target": "empty.test", "date": "2026-10-12", "example": true, "findings": []}
+{
+ "target": "empty.test",
+ "date": "2026-10-12",
+ "example": true,
+ "findings": [],
+ "check_log": [
+  {
+   "id": "dns_records",
+   "check": "DNS records (A, AAAA, MX, NS, TXT)",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "caa",
+   "check": "CAA records",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "spf",
+   "check": "SPF record",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "dkim",
+   "check": "DKIM (common selectors)",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "dmarc",
+   "check": "DMARC policy",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "mta_sts_tlsrpt",
+   "check": "MTA-STS / TLS-RPT",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "dnssec",
+   "check": "DNSSEC",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "tls_cert",
+   "check": "TLS certificate",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "tls_versions",
+   "check": "TLS protocol versions",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "ct_subdomains",
+   "check": "Certificate Transparency names",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "http_headers",
+   "check": "HTTPS security headers",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "https_redirect",
+   "check": "HTTP to HTTPS redirect",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "robots_security_txt",
+   "check": "robots.txt and security.txt",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "rdap",
+   "check": "Registry RDAP",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "id": "fingerprint",
+   "check": "Technology fingerprint",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  }
+ ]
+}
