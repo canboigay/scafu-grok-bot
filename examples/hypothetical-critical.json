@@ -1,0 +1,157 @@
+{
+ "_comment": "EXAMPLE DATA - hypothetical target and findings for demonstrating the report format. Not a real assessment.",
+ "example": true,
+ "target": "example-shop.test",
+ "date": "2026-10-12",
+ "authorized_by": "EXAMPLE DATA (hypothetical owner)",
+ "scope": "example-shop.test and www.example-shop.test (hypothetical)",
+ "methods": [
+  "DNS over HTTPS",
+  "RDAP registry lookup",
+  "Certificate Transparency logs",
+  "Single TLS handshakes",
+  "Ordinary GET requests to public pages"
+ ],
+ "findings": [
+  {
+   "severity": "critical",
+   "title": "Publicly downloadable database backup",
+   "description": "A SQL dump is directly downloadable from the web root.",
+   "evidence": "GET https://example-shop.test/backup/db-2026-10-01.sql  \u2192  200 (412 MB, application/sql)",
+   "impact": "Full customer data, including password hashes, can be downloaded by anyone.",
+   "remediation": [
+    "Remove the file and block /backup/ at the web server.",
+    "Rotate all credentials in the dump and assess breach-notification duties."
+   ],
+   "action": "Remove backup, rotate credentials"
+  },
+  {
+   "severity": "high",
+   "title": "Exposed .git directory",
+   "description": "The .git directory is readable over HTTPS, exposing source history.",
+   "evidence": "GET /.git/HEAD  \u2192  200  \"ref: refs/heads/main\"",
+   "impact": "Source code and any committed secrets can be reconstructed.",
+   "remediation": [
+    "Deny access to /.git/ at the web server.",
+    "Audit history for secrets and rotate them."
+   ]
+  },
+  {
+   "severity": "high",
+   "title": "TLS certificate expired",
+   "description": "The served certificate expired 9 days ago.",
+   "evidence": "notAfter=2026-10-03 PT\nIssuer: Let's Encrypt R11",
+   "impact": "Browsers show a full-page warning; users are trained to click through.",
+   "remediation": [
+    "Renew the certificate and fix auto-renewal."
+   ]
+  },
+  {
+   "severity": "medium",
+   "title": "Session cookie missing Secure and HttpOnly",
+   "description": "The session cookie lacks Secure and HttpOnly flags. The value below is long and must wrap without overflowing the card.",
+   "evidence": "Set-Cookie: session=A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3A9f3; Path=/",
+   "impact": "Cookies may be sent over plain HTTP and read by injected script.",
+   "remediation": [
+    "Set Secure; HttpOnly; SameSite=Lax on session cookies."
+   ]
+  },
+  {
+   "severity": "medium",
+   "title": "No HSTS header",
+   "description": "No Strict-Transport-Security header is sent.",
+   "evidence": "Strict-Transport-Security: (absent)",
+   "impact": "First visits are open to SSL stripping.",
+   "remediation": [
+    "Send max-age=31536000; includeSubDomains."
+   ]
+  },
+  {
+   "key": "nginx-cve-2021-23017",
+   "severity": "medium",
+   "claimed_severity": "high",
+   "basis": "inferred",
+   "confidence": "low",
+   "cve": [
+    "CVE-2021-23017"
+   ],
+   "title": "nginx 1.18.0 may be affected by CVE-2021-23017 (resolver off-by-one)",
+   "description": "The Server header reports nginx/1.18.0, a version listed as affected by CVE-2021-23017. Distribution backports are common, so the version string alone does not prove the host is vulnerable.",
+   "evidence": "Server: nginx/1.18.0 (Ubuntu)\nNVD: CVE-2021-23017, CVSS 7.7 (High), affects nginx 0.6.18\u20131.20.0",
+   "impact": "If the resolver directive is in use and the package is unpatched, a crafted DNS response could crash a worker or worse.",
+   "remediation": [
+    "Confirm the installed package version with the host owner (apt policy nginx).",
+    "Apply distribution security updates."
+   ]
+  },
+  {
+   "severity": "low",
+   "title": "Server version disclosed",
+   "description": "The Server header discloses an exact version.",
+   "evidence": "Server: nginx/1.18.0 (Ubuntu)",
+   "impact": "Helps attackers match known CVEs.",
+   "remediation": [
+    "Set server_tokens off."
+   ]
+  },
+  {
+   "severity": "info",
+   "title": "Hosting provider",
+   "description": "Hosted on a single VPS without a CDN.",
+   "evidence": "A  203.0.113.10",
+   "impact": "None identified.",
+   "remediation": [
+    "None required."
+   ]
+  }
+ ],
+ "strengths": [],
+ "unverified": [
+  {
+   "item": "Admin panel authentication",
+   "reason": "Authenticated testing is out of scope for a passive check."
+  }
+ ],
+ "appendix": [
+  {
+   "title": "Sample DNS records (EXAMPLE DATA)",
+   "type": "table",
+   "content": {
+    "columns": [
+     "Name",
+     "Type",
+     "Answer"
+    ],
+    "rows": [
+     [
+      "example-shop.test",
+      "A",
+      "203.0.113.10"
+     ],
+     [
+      "example-shop.test",
+      "MX",
+      "10 mail.example-shop.test."
+     ]
+    ]
+   }
+  }
+ ],
+ "check_log": [
+  {
+   "check": "DNS and RDAP lookups",
+   "status": "ok",
+   "detail": "EXAMPLE DATA"
+  },
+  {
+   "check": "TLS handshake",
+   "status": "ok",
+   "detail": "Certificate expired (H-02)."
+  },
+  {
+   "check": "Subdomain enumeration via CT",
+   "status": "failed",
+   "detail": "crt.sh timed out after 3 retries (EXAMPLE DATA)."
+  }
+ ]
+}
