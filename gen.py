@@ -80,14 +80,15 @@ def auto_cap(d):
             f.setdefault("claimed_severity", str(f["severity"]).lower()); f["severity"] = "medium"
     return d
 
-def load(path, cap=False):
-    return normalize(json.load(open(path)), cap=cap)
+def load(path, cap=False, allow_incomplete=False):
+    return normalize(json.load(open(path)), cap=cap, allow_incomplete=allow_incomplete)
 
-def normalize(d, cap=False):
+def normalize(d, cap=False, allow_incomplete=False):
     d = copy.deepcopy(d)
     if cap: auto_cap(d)
-    errs = validate.validate(d)
+    errs = validate.validate(d, allow_incomplete=allow_incomplete)
     if errs: raise ValidationError("\n".join(errs))
+    d["_incomplete"] = validate.coverage_problems(d)
     d.setdefault("date", dt.date.today().isoformat())
     F = []
     for i, f in enumerate(as_list(d.get("findings"))):
@@ -193,7 +194,7 @@ def latest_snapshot(hdir):
 def diff(prev_raw, cur):
     """Compare a previous snapshot (raw JSON) with the current normalized data, matched by finding key."""
     meta = prev_raw.get("_snapshot", {})
-    prev = normalize({k: v for k, v in prev_raw.items() if k != "_snapshot"})
+    prev = normalize({k: v for k, v in prev_raw.items() if k != "_snapshot"}, allow_incomplete=True)
     pg = meta.get("grade") or effective_grade(prev)[0]
     cg = effective_grade(cur)[0]
     P = {f["key"]: f for f in prev["findings"]}; C = {f["key"]: f for f in cur["findings"]}
@@ -284,7 +285,7 @@ def auto_verdict(d, grade, cnt, F):
             parts = [f'{nw(cnt[s])} {s.lower()}' for s in ("Critical", "High") if cnt[s]]
             s1 += f" The assessment identified {join_and(parts)}-severity issue{'s' if cnt['Critical']+cnt['High']>1 else ''} that need prompt attention."
         if d["strengths"]:
-            s1 += " Controls working well include " + join_and([E(s["title"]).lower() if s["title"][:2].upper()!=s["title"][:2] else E(s["title"]) for s in d["strengths"][:4]]) + "."
+            s1 += " Controls working well include " + join_and([E(s["title"][:1].lower() + s["title"][1:]) if s["title"][1:2].islower() else E(s["title"]) for s in d["strengths"][:4]]) + "."
         out.append(s1)
         if worst:
             top = worst[0]; tf = [f for f in F if f["severity"] == top]
@@ -376,6 +377,10 @@ def build(d):
     if badc:
         txt = f'{nw(len(badc)).capitalize()} check{"s" if len(badc)>1 else ""} failed or {"were" if len(badc)>1 else "was"} skipped ({join_and([E(c["check"]) for c in badc[:3]])}{" and more" if len(badc)>3 else ""}); see Assessment coverage in Section {num["limits"]}.'
         note = note.replace("</div>", " " + txt + "</div>") if note else f'<div class="note">{txt}</div>'
+    gaps = d.get("_incomplete") or []
+    incomplete_banner = (f'<div class="banner-inc"><b>INCOMPLETE ASSESSMENT</b> · {len(gaps)} required check{"s" if len(gaps) != 1 else ""} '
+                         f'missing or undocumented: {E("; ".join(g.split(" (")[0].replace("required check ", "") for g in gaps[:6]))}{" …" if len(gaps) > 6 else ""}. '
+                         'The grade reflects only the checks that were performed.</div>') if gaps else ""
     verdict = d.get("summary")
     verdict_paras = [E(p) for p in as_list(verdict)] if verdict else auto_verdict(d, grade, cnt, F)
     verdict_html = "".join(f'<p class="lead">{p}</p>' for p in verdict_paras)
@@ -450,7 +455,7 @@ def build(d):
 
     return grade, cnt, f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Passive Security Assessment · {E(t)} · {E(prep)}</title><style>{css}</style></head><body>
-<div class="cover"><div class="band"></div><div class="grid"></div>{'<div class="example-flag">EXAMPLE DATA</div>' if ex else ''}<div class="in">
+<div class="cover"><div class="band"></div><div class="grid"></div>{'<div class="example-flag">EXAMPLE DATA</div>' if ex else ''}{'<div class="example-flag inc">INCOMPLETE ASSESSMENT</div>' if d.get("_incomplete") else ''}<div class="in">
  {brand_mark(b)}
  <div class="kicker">Passive Assessment</div>
  <h1>External Security<br><em>Reconnaissance Report</em></h1>
@@ -468,6 +473,7 @@ def build(d):
 </div></div>
 <section id="exec">
  {'<div class="banner-ex">EXAMPLE DATA · HYPOTHETICAL TARGET AND FINDINGS</div>' if ex else ''}
+ {incomplete_banner}
  <div class="sec-head"><span class="num">{num["exec"]}</span><h2>Executive Summary</h2></div>
  <div class="exec">
   <div class="grade"><div class="cap">Overall grade</div><div class="letter">{grade}</div><div class="scale">{scale}</div><div class="sub2">{E(tagline)}</div></div>
@@ -515,17 +521,18 @@ def main():
     ap.add_argument("--no-pdf", action="store_true", help="write HTML only")
     ap.add_argument("--history-dir", help="snapshot folder (default $SCAFU_REPORTS_DIR/<target>/history/, where SCAFU_REPORTS_DIR defaults to ./reports next to gen.py)")
     ap.add_argument("--no-history", action="store_true", help="neither read nor save snapshots")
+    ap.add_argument("--allow-incomplete", action="store_true", help="render even if required checks are missing from check_log (adds an 'Incomplete assessment' banner)")
     ap.add_argument("--auto-cap", action="store_true", help="downgrade inferred critical/high findings to medium instead of failing")
     a = ap.parse_args()
-    return run(a.findings, a.out, pdf=not a.no_pdf, history_dir=a.history_dir, history=not a.no_history, cap=a.auto_cap)
+    return run(a.findings, a.out, pdf=not a.no_pdf, history_dir=a.history_dir, history=not a.no_history, cap=a.auto_cap, allow_incomplete=a.allow_incomplete)
 
-def run(findings, out, pdf=True, history_dir=None, history=True, cap=False):
+def run(findings, out, pdf=True, history_dir=None, history=True, cap=False, allow_incomplete=False):
     try:
         raw = json.load(open(findings))
     except Exception as x:
         print(f"error: cannot read {findings}: {x}", file=sys.stderr); sys.exit(1)
     try:
-        d = normalize(raw, cap=cap)
+        d = normalize(raw, cap=cap, allow_incomplete=allow_incomplete)
     except ValidationError as x:
         for line in str(x).splitlines(): print("error:", line, file=sys.stderr)
         sys.exit(1)

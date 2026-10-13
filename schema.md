@@ -1,8 +1,10 @@
 # SCAFU Recon report generator (default brand: SCAFU)
 
 ```
-python3 gen.py findings.json --out <dir> [--no-pdf] [--history-dir DIR | --no-history] [--auto-cap]
-python3 validate.py findings.json      # validation only; gen.py runs it automatically
+python3 gen.py findings.json --out <dir> [--no-pdf] [--history-dir DIR | --no-history] [--auto-cap] [--allow-incomplete]
+python3 validate.py findings.json [--allow-incomplete]   # validation only; gen.py runs it automatically
+python3 collect.py <domain> --out <dir>                 # passive collector -> <dir>/raw/ + draft findings.json
+./scafu.sh <domain> [--out dir]                         # collect -> validate -> render in one command
 ./run_tests.sh                          # pytest suite (creates .venv with pytest on first run)
 ```
 - gen.py validates first and exits 1 (one `error:` line per problem on stderr) without rendering if the file is invalid.
@@ -25,7 +27,7 @@ Needs `style.css` and `build/inter.woff`, `build/mono.woff` next to `gen.py`, pl
 | `strengths` | (string or `{title, detail}`)[] | no | Section omitted when empty |
 | `unverified` | `{item, reason, confirm?}`[] | no | Omitted when empty (together with `limitations`) |
 | `limitations` | string[] | no | General limitations list |
-| `check_log` | `{check, status: ok\|failed\|skipped, detail}`[] | no | "Assessment coverage" table in the limitations section; failed/skipped listed first and mentioned in the exec-summary note |
+| `check_log` | `{id?, check, status: ok\|failed\|skipped, detail}`[] | no | "Assessment coverage" table in the limitations section; failed/skipped listed first and mentioned in the exec-summary note |
 | `appendix` | `{title, type, content, note?, break?}`[] | no | Omitted when empty |
 | `grade` | `A`–`F` | no | Overrides the rubric (rubric result is still shown as a note) |
 | `tagline` | string | no | Overrides the grade tagline |
@@ -64,6 +66,45 @@ Each item starts a new page unless `"break": false`.
 - Priority actions: up to 3 findings of the highest non-info severity present, topped up from the next severities; none → "No remediation is required".
 - The note under priorities and section numbers adapt to whether strengths/limitations exist.
 - Verdict paragraphs and tagline are generated from the grade, counts, top findings and strengths unless overridden.
+
+## Required-coverage gate
+`checks.json` defines the canonical passive checks: `dns_records, caa, spf, dkim, dmarc, mta_sts_tlsrpt, dnssec, tls_cert, tls_versions, ct_subdomains, http_headers, https_redirect, robots_security_txt, rdap, fingerprint`.
+- Every id must appear in `check_log` as an entry with that `id`. `ok` is enough on its own; `failed` or `skipped` also needs a non-empty `detail` explaining why.
+- If any check is missing or has no detail, `validate.py` and `gen.py` fail (exit 1, one `coverage:` error per gap).
+- With `--allow-incomplete` they render anyway. The cover then shows an **INCOMPLETE ASSESSMENT** flag, and the executive summary gets a banner listing the gaps and stating that the grade reflects only the checks performed.
+- Entries without an `id` are allowed as extra, custom checks.
+
+## Passive collector (`collect.py`)
+`python3 collect.py <domain> --out <dir> [--authorized-by NAME] [--timeout 15]` runs every canonical check passively:
+- **DNS:** DNS-over-HTTPS via dns.google, falling back to `dig`. DKIM is checked only at a fixed list of 16 common selectors, with wildcard detection.
+- **TLS certificate:** one Python `ssl` handshake.
+- **TLS versions:** one `openssl s_client` handshake per version.
+- **HTTP:** one HTTPS GET of `/`, one plain-HTTP GET of `/` (redirects are not followed), and GETs of robots.txt and security.txt.
+- **Registry and CT:** crt.sh JSON (retried up to 3 times) and RDAP via rdap.org.
+
+There is no port scanning, brute force or exploitation. Raw output goes to `<dir>/raw/` (`collected.json` plus one file per source), and a **draft** `findings.json` with a complete `check_log` goes to `<dir>/findings.json`. Any network error becomes `failed` with the error as its detail, and the collector never crashes. A version of TLS the client cannot test becomes `skipped` and is added to `unverified`.
+
+Automatic rules (keys are stable, so history diffs line up between runs):
+
+| key | severity | rule |
+|---|---|---|
+| `missing-hsts` / `weak-hsts` | medium / low | no Strict-Transport-Security header / max-age < 180 days |
+| `csp-unsafe` / `missing-csp` | medium / low | CSP allows 'unsafe-inline' or 'unsafe-eval' / no CSP |
+| `no-dnssec` | medium | no DS+DNSKEY |
+| `no-caa` | low | no CAA records |
+| `spf-plus-all` / `spf-neutral` / `spf-softfail` / `spf-missing` / `spf-multiple` | high / medium / low / medium (low if no MX) / medium | SPF qualifier and record problems |
+| `dmarc-missing` / `dmarc-none` / `dmarc-quarantine` | medium / medium / low | DMARC policy |
+| `no-mta-sts-tlsrpt` | low | domain has (non-null) MX but lacks MTA-STS and/or TLS-RPT |
+| `no-security-txt` | low | no security.txt with a Contact field |
+| `acao-wildcard` | low | `Access-Control-Allow-Origin: *` on `/` |
+| `cert-expiring` / `cert-expired` / `cert-untrusted` | medium / high / high | expiry within 30 days / expired / verification failed |
+| `weak-tls` | medium | TLS 1.0 or 1.1 handshake accepted |
+| `no-https-redirect` | medium | plain HTTP is not redirected to HTTPS |
+| `domain-expiring` | medium/high | RDAP expiry within 30 days / passed |
+| `version-disclosure` | low | exact versions in Server / X-Powered-By |
+| `fingerprint`, `ct-names`, `robots-sensitive` | info | observations |
+
+The collector also detects strengths: HSTS, a clean CSP, DNSSEC, CAA, SPF -all, DMARC reject, MTA-STS + TLS-RPT, security.txt, modern TLS only, a valid certificate, the HTTPS redirect, a registrar lock and DKIM. Its draft always passes `validate.py`. Review it, and set `authorized_by`, before you share a report.
 
 ## Branding
 Defaults live in `brand.json` (SCAFU, taken from https://sca-fu.com). A findings file can override any key with a `brand` block, which is deep-merged, so you can change only one colour.

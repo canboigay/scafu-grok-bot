@@ -17,6 +17,27 @@ FIELDS = {"id": str, "key": str, "severity": str, "title": str, "description": s
           "remediation": (list, str), "status": str, "action": str, "basis": str, "confidence": (str, int, float),
           "claimed_severity": str, "cve": (str, list)}
 
+_HERE = __import__("os").path.dirname(__import__("os").path.abspath(__file__))
+
+def required_checks():
+    """[(id, name)] from checks.json."""
+    return [(c["id"], c["name"]) for c in json.load(open(_HERE + "/checks.json"))["required"]]
+
+def coverage_problems(d):
+    """List of coverage-gate problems (empty = complete)."""
+    log = d.get("check_log") if isinstance(d, dict) else None
+    log = [c for c in log if isinstance(c, dict)] if isinstance(log, list) else []
+    by = {}
+    for c in log:
+        if c.get("id"): by.setdefault(c["id"], c)
+    out = []
+    for cid, name in required_checks():
+        c = by.get(cid)
+        if not c: out.append(f"required check {cid!r} ({name}) is missing from check_log")
+        elif c.get("status") in ("failed", "skipped") and not str(c.get("detail") or "").strip():
+            out.append(f"required check {cid!r} is {c['status']} without a detail")
+    return out
+
 def slug(s): return re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-")
 
 HEX = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
@@ -51,7 +72,7 @@ def validate_brand(b):
             e.append("powered_by: must be false, a string, or {text, url (http/https)}")
     return e
 
-def validate(d):
+def validate(d, allow_incomplete=False):
     e = []
     if not isinstance(d, dict): return ["root: must be a JSON object"]
     for k, v in d.items():
@@ -109,6 +130,7 @@ def validate(d):
             e.append(f"unverified[{i}]: must be a string or {{item, reason, confirm?}}")
     for i, c in enumerate(d.get("check_log") or []):
         if not isinstance(c, dict) or not isinstance(c.get("check"), str): e.append(f"check_log[{i}]: needs a 'check' string"); continue
+        if c.get("id") is not None and not isinstance(c.get("id"), str): e.append(f"check_log[{i}].id: must be a string")
         if c.get("status") not in CHECK_STATUS: e.append(f"check_log[{i}].status: {c.get('status')!r} not ok|failed|skipped")
     for i, a in enumerate(d.get("appendix") or []):
         if not isinstance(a, dict): e.append(f"appendix[{i}]: must be an object"); continue
@@ -118,15 +140,20 @@ def validate(d):
         if t == "table" and not (isinstance(c, dict) and isinstance(c.get("columns"), list) and isinstance(c.get("rows"), list)):
             e.append(f"appendix[{i}].content: table needs {{columns: [], rows: [[]]}}")
         if t == "records" and not isinstance(c, (dict, list)): e.append(f"appendix[{i}].content: records needs an object or [[k,v]]")
+    if not allow_incomplete and isinstance(d.get("target"), str):
+        e += ["coverage: " + x + " (use --allow-incomplete to render anyway)" for x in coverage_problems(d)]
     return e
 
 def main():
-    if len(sys.argv) != 2: sys.exit(__doc__)
-    try: d = json.load(open(sys.argv[1]))
+    args = [a for a in sys.argv[1:] if a != "--allow-incomplete"]
+    allow = "--allow-incomplete" in sys.argv[1:]
+    if len(args) != 1: sys.exit(__doc__)
+    try: d = json.load(open(args[0]))
     except Exception as x: print(f"error: cannot read JSON: {x}"); sys.exit(1)
-    errs = validate(d)
+    errs = validate(d, allow_incomplete=allow)
     for x in errs: print("error:", x)
     if errs: sys.exit(1)
-    print("ok")
+    gaps = coverage_problems(d)
+    print("ok" + (f" (INCOMPLETE: {len(gaps)} coverage gap(s) allowed)" if gaps else ""))
 
 if __name__ == "__main__": main()

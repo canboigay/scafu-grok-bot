@@ -172,3 +172,5 @@ a.pby{color:inherit;text-decoration:none}
 .sfoot{display:none}
 @media screen{.sfoot{display:flex;justify-content:space-between;margin-top:10mm;padding-top:2mm;border-top:.6pt solid var(--line);font-size:7pt;letter-spacing:.06em;color:var(--muted)}.sfoot a{color:var(--accent);text-decoration:none}}
 .cover .pby-c a,.end a{text-decoration:none}.end a{color:var(--accent)}
+.banner-inc{font-size:8pt;color:#7d2a33;background:#f6e9ea;border:1px solid #e3c3c6;border-radius:3px;padding:2mm 3mm;margin-bottom:5mm;line-height:1.5}.banner-inc b{letter-spacing:.1em}
+.example-flag.inc{background:#f6e9ea;color:#7d2a33}.example-flag+.example-flag.inc{top:20mm}
