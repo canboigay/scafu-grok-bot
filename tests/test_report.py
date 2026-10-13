@@ -10,11 +10,14 @@ def F(sev="low", title=None, **kw):
     F.n = getattr(F, "n", 0) + 1
     return dict(severity=sev, title=title or f"Finding {F.n}", **kw)
 
-def doc(findings=(), **kw):
-    d = dict(target="t.test", date="2026-10-12", findings=list(findings)); d.update(kw); return d
+def full_log():
+    return [{"id": c, "check": n, "status": "ok", "detail": "fixture"} for c, n in validate.required_checks()]
 
-def render(d):
-    _, _, html = gen.build(gen.normalize(d)); return html
+def doc(findings=(), **kw):
+    d = dict(target="t.test", date="2026-10-12", findings=list(findings), check_log=full_log()); d.update(kw); return d
+
+def render(d, allow_incomplete=False):
+    _, _, html = gen.build(gen.normalize(d, allow_incomplete=allow_incomplete)); return html
 
 def cli(tmp_path, d, *args):
     p = tmp_path / "in.json"; p.write_text(json.dumps(d))
@@ -108,14 +111,14 @@ def test_auto_cap(tmp_path):
 def test_inferred_defensive_cap_in_normalizer():
     # bypass validation to prove rendering itself never shows inferred findings above medium
     orig = validate.validate
-    validate.validate = lambda d: []
+    validate.validate = lambda d, **k: []
     try: n = gen.normalize(doc([F("high", "x", basis="inferred")]))["findings"][0]
     finally: validate.validate = orig
     assert n["severity"] == "Medium" and n["claimed_severity"] == "High"
 
 # ---------------------------------------------------------------- sections adapt
 def test_empty_sections_omitted():
-    h = render(doc([F("low")]))
+    h = render(doc([F("low")], check_log=[]), allow_incomplete=True)
     for sid in ("strengths", "limits", "appendix", "changes"): assert f'id="{sid}"' not in h
     assert "High severity" not in h and "Low severity · 1" in h
     for s in gen.SEV: assert f'<div class="l">{s}</div>' in h      # all 5 count cards
@@ -123,14 +126,14 @@ def test_empty_sections_omitted():
 def test_sections_present_and_numbered():
     h = render(doc([F("low")], strengths=["s"], unverified=[{"item": "u", "reason": "r"}],
                    check_log=[{"check": "Port 80", "status": "failed", "detail": "blocked"}, {"check": "DNS", "status": "ok"}],
-                   appendix=[{"title": "raw", "type": "raw", "content": "x"}]))
+                   appendix=[{"title": "raw", "type": "raw", "content": "x"}]), allow_incomplete=True)
     assert '<span class="num">05</span><h2>Strengths' in h and '<span class="num">06</span><h2>Unverified' in h
     lim = h.split('id="limits"')[1]
     assert "Assessment coverage" in lim and lim.index("Port 80") < lim.index("DNS") and "Failed</span>" in lim
     assert "failed or was skipped (Port 80)" in h
 
 def test_check_log_only_creates_limits():
-    h = render(doc([], check_log=[{"check": "TLS 1.0", "status": "skipped", "detail": "untestable"}]))
+    h = render(doc([], check_log=[{"check": "TLS 1.0", "status": "skipped", "detail": "untestable"}]), allow_incomplete=True)
     assert 'id="limits"' in h and "Limitations &amp; Coverage" in h and "Skipped</span>" in h
 
 def test_priorities():
@@ -238,3 +241,35 @@ def test_brand_override_and_disable_powered_by(tmp_path):
 def test_brand_rejections(brand, msg):
     errs = validate.validate(doc(brand=brand))
     assert any(msg in e for e in errs), errs
+
+
+# ---------------------------------------------------------------- required-coverage gate
+def test_checks_json_canonical_list():
+    assert [c for c, _ in validate.required_checks()] == ["dns_records", "caa", "spf", "dkim", "dmarc", "mta_sts_tlsrpt", "dnssec", "tls_cert",
+        "tls_versions", "ct_subdomains", "http_headers", "https_redirect", "robots_security_txt", "rdap", "fingerprint"]
+
+def test_gate_missing_check_fails():
+    d = doc([]); d["check_log"] = [c for c in d["check_log"] if c["id"] != "dnssec"]
+    errs = validate.validate(d)
+    assert any("'dnssec'" in e and "missing" in e for e in errs)
+    assert validate.validate(d, allow_incomplete=True) == []
+    with pytest.raises(gen.ValidationError): gen.normalize(d)
+
+def test_gate_failed_or_skipped_needs_detail():
+    d = doc([]); d["check_log"][0].update(status="failed", detail="DoH timeout"); d["check_log"][1].update(status="skipped", detail="n/a")
+    assert validate.validate(d) == []
+    d["check_log"][2].update(status="skipped", detail="  ")
+    assert any("'spf' is skipped without a detail" in e for e in validate.validate(d))
+
+def test_gate_cli_and_banner(tmp_path):
+    d = doc([F("low")], check_log=[])
+    r = cli(tmp_path, d, "--no-pdf", "--no-history"); assert r.returncode == 1 and "coverage:" in r.stderr
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "validate.py"), str(tmp_path / "in.json")], capture_output=True, text=True); assert r.returncode == 1
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "validate.py"), str(tmp_path / "in.json"), "--allow-incomplete"], capture_output=True, text=True)
+    assert r.returncode == 0 and "INCOMPLETE" in r.stdout
+    r = cli(tmp_path, d, "--no-pdf", "--no-history", "--allow-incomplete"); assert r.returncode == 0, r.stderr
+    h = (tmp_path / "out" / "report.html").read_text()
+    assert "INCOMPLETE ASSESSMENT</b> · 15 required checks" in h and 'example-flag inc' in h
+
+def test_complete_report_has_no_banner():
+    assert "INCOMPLETE ASSESSMENT" not in render(doc([F("low")]))

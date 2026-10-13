@@ -1,0 +1,149 @@
+{
+ "domain": "good.test",
+ "collected_at": "2026-10-12T19:00:00-07:00",
+ "errors": {},
+ "dns": {
+  "A": {
+   "answers": [
+    "192.0.2.10"
+   ],
+   "ad": true,
+   "via": "fixture"
+  },
+  "AAAA": {
+   "answers": []
+  },
+  "MX": {
+   "answers": [
+    "10 mx.good.test."
+   ]
+  },
+  "NS": {
+   "answers": [
+    "ns1.good.test."
+   ]
+  },
+  "TXT": {
+   "answers": [
+    "v=spf1 include:_spf.good.test -all"
+   ]
+  },
+  "HTTPS": {
+   "answers": []
+  },
+  "CAA": {
+   "answers": [
+    "0 issue \"letsencrypt.org\""
+   ]
+  },
+  "_dmarc": {
+   "answers": [
+    "v=DMARC1; p=reject"
+   ]
+  },
+  "_mta-sts": {
+   "answers": [
+    "v=STSv1; id=1"
+   ]
+  },
+  "_smtp._tls": {
+   "answers": [
+    "v=TLSRPTv1; rua=https://good.test/tlsrpt"
+   ]
+  },
+  "DS": {
+   "answers": [
+    "2371 13 2 ABCD"
+   ]
+  },
+  "DNSKEY": {
+   "answers": [
+    "257 3 13 xyz"
+   ]
+  }
+ },
+ "dkim": {
+  "s1": [
+   "v=DKIM1; k=rsa; p=MIIB"
+  ]
+ },
+ "dkim_wildcard": false,
+ "tls_cert": {
+  "verified": true,
+  "subject": "commonName=good.test",
+  "issuer": "countryName=US, organizationName=Let's Encrypt, commonName=R11",
+  "not_before": "Sep  1 00:00:00 2026 GMT",
+  "not_after": "Dec 30 00:00:00 2026 GMT",
+  "san": [
+   "good.test"
+  ]
+ },
+ "tls_versions": {
+  "TLSv1.0": {
+   "accepted": false,
+   "note": "refused"
+  },
+  "TLSv1.1": {
+   "accepted": false,
+   "note": "refused"
+  },
+  "TLSv1.2": {
+   "accepted": true,
+   "note": "TLSv1.2"
+  },
+  "TLSv1.3": {
+   "accepted": true,
+   "note": "TLSv1.3"
+  }
+ },
+ "ct": {
+  "certificates": 3,
+  "names": [
+   "good.test",
+   "www.good.test"
+  ]
+ },
+ "rdap": {
+  "ldhName": "GOOD.TEST",
+  "status": [
+   "client transfer prohibited"
+  ],
+  "events": {
+   "expiration": "2028-01-01T00:00:00Z"
+  },
+  "registrar": "Fixture Registrar",
+  "nameservers": [
+   "ns1.good.test"
+  ],
+  "secureDNS": {
+   "delegationSigned": true
+  }
+ },
+ "http": {
+  "status": 200,
+  "headers": {
+   "strict-transport-security": "max-age=31536000; includeSubDomains",
+   "content-security-policy": "default-src 'self'",
+   "server": "nginx"
+  },
+  "body": "<html></html>"
+ },
+ "http_plain": {
+  "status": 301,
+  "headers": {},
+  "location": "https://good.test/"
+ },
+ "files": {
+  "/robots.txt": {
+   "status": 200,
+   "body": "User-agent: *\nDisallow:"
+  },
+  "/.well-known/security.txt": {
+   "status": 200,
+   "body": "Contact: https://good.test/security\nExpires: 2027-01-01T00:00:00Z"
+  },
+  "/security.txt": {
+   "status": 404
+  }
+ }
+}
