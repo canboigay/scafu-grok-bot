@@ -1,0 +1,17 @@
+{
+ "_source": "Extracted from https://sca-fu.com on 2026-10-12 (inline CSS :root variables, Google Fonts link, header wordmark markup).",
+ "name": "SCAFU",
+ "url": "https://sca-fu.com",
+ "eyebrow": "Forensic Security Consulting",
+ "wordmark": {"text": "SCAF", "accent": "U"},
+ "logo": null,
+ "colors": {
+  "dark": "#0b0a09",
+  "dark_deep": "#060605",
+  "on_dark": "#f3ede4",
+  "accent": "#c4b59a",
+  "accent_text": "#7a6a4f",
+  "ink": "#1a1816"
+ },
+ "powered_by": {"text": "Powered by SCAFU · sca-fu.com", "url": "https://sca-fu.com"}
+}
