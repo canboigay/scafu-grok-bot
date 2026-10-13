@@ -1,0 +1,20 @@
+{
+ "_comment": "Canonical passive check list. Every id below must appear in a report's check_log (status ok, or failed/skipped with a detail) unless --allow-incomplete is used.",
+ "required": [
+  {"id": "dns_records", "name": "DNS records (A, AAAA, MX, NS, TXT)", "method": "DNS over HTTPS (dns.google) or dig"},
+  {"id": "caa", "name": "CAA records", "method": "DNS CAA lookup"},
+  {"id": "spf", "name": "SPF record", "method": "DNS TXT lookup"},
+  {"id": "dkim", "name": "DKIM (common selectors)", "method": "DNS TXT lookup of a fixed list of common selectors"},
+  {"id": "dmarc", "name": "DMARC policy", "method": "DNS TXT _dmarc lookup"},
+  {"id": "mta_sts_tlsrpt", "name": "MTA-STS / TLS-RPT", "method": "DNS TXT _mta-sts and _smtp._tls lookups"},
+  {"id": "dnssec", "name": "DNSSEC", "method": "DNS DS/DNSKEY lookups and resolver AD flag"},
+  {"id": "tls_cert", "name": "TLS certificate", "method": "Single TLS handshake on 443 (Python ssl)"},
+  {"id": "tls_versions", "name": "TLS protocol versions", "method": "One openssl s_client handshake per protocol version"},
+  {"id": "ct_subdomains", "name": "Certificate Transparency names", "method": "crt.sh JSON"},
+  {"id": "http_headers", "name": "HTTPS security headers", "method": "One HTTPS GET of /"},
+  {"id": "https_redirect", "name": "HTTP to HTTPS redirect", "method": "One plain-HTTP GET of / (no redirect following)"},
+  {"id": "robots_security_txt", "name": "robots.txt and security.txt", "method": "GET /robots.txt, /.well-known/security.txt, /security.txt"},
+  {"id": "rdap", "name": "Registry RDAP", "method": "rdap.org lookup"},
+  {"id": "fingerprint", "name": "Technology fingerprint", "method": "Server / X-Powered-By headers and generator meta tag from the GET of /"}
+ ]
+}
