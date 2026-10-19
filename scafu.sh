@@ -34,6 +34,13 @@ print(f" {d['target']}  |  {s.split(' | ')[0]}  |  " + " ".join(x for x in s.spl
 print(f" Findings {len(d['findings'])} · strengths {len(d['strengths'])} · checks {len(d['check_log'])} ({len(bad)} failed/skipped)")
 for c in bad: print(f"   - {c['status'].upper():7} {c['id']}: {c['detail'][:90]}")
 print(" Report: " + s.split(" | ")[3] + "/report.html  (+ report.pdf, preview-1.png, preview-2.png)")
+if any("bot-challenge" in c["detail"] for c in bad):
+    print(" ! A bot-challenge/WAF page answered some HTTP checks. Those items are UNVERIFIED, not findings.")
+    print("   Capture headers from a normal browser session and make a reviewed copy (see INSTALL.md).")
+if any("not evidence about the target" in c["detail"] for c in bad):
+    print(" ! Outbound port 80 looks blocked from this machine; the HTTP->HTTPS redirect was not tested.")
+if "NOT CONFIRMED" in d.get("authorized_by", ""):
+    print(" ! authorized_by is not set. Re-run with --authorized-by \"Name (role)\" before sharing.")
 print(" Review the draft findings and authorized_by before sharing.")
 print("=" * 64)
 PY

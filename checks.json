@@ -10,11 +10,11 @@
   {"id": "dnssec", "name": "DNSSEC", "method": "DNS DS/DNSKEY lookups and resolver AD flag"},
   {"id": "tls_cert", "name": "TLS certificate", "method": "Single TLS handshake on 443 (Python ssl)"},
   {"id": "tls_versions", "name": "TLS protocol versions", "method": "One openssl s_client handshake per protocol version"},
-  {"id": "ct_subdomains", "name": "Certificate Transparency names", "method": "crt.sh JSON"},
+  {"id": "ct_subdomains", "name": "Certificate Transparency names", "method": "crt.sh JSON, Cert Spotter API fallback"},
   {"id": "http_headers", "name": "HTTPS security headers", "method": "One HTTPS GET of /"},
   {"id": "https_redirect", "name": "HTTP to HTTPS redirect", "method": "One plain-HTTP GET of / (no redirect following)"},
   {"id": "robots_security_txt", "name": "robots.txt and security.txt", "method": "GET /robots.txt, /.well-known/security.txt, /security.txt"},
-  {"id": "rdap", "name": "Registry RDAP", "method": "rdap.org lookup"},
+  {"id": "rdap", "name": "Registry RDAP", "method": "rdap.org lookup (walks up to the registered domain; not applicable on shared platform suffixes)"},
   {"id": "fingerprint", "name": "Technology fingerprint", "method": "Server / X-Powered-By headers and generator meta tag from the GET of /"}
  ]
 }

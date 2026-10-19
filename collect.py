@@ -25,6 +25,56 @@ ACTIONS = {"no-caa": "Publish CAA records", "spf-missing": "Publish an SPF recor
            "no-security-txt": "Publish security.txt", "domain-expiring": "Renew the domain", "version-disclosure": "Hide version numbers"}
 RTYPES = {"A": 1, "NS": 2, "CNAME": 5, "MX": 15, "TXT": 16, "AAAA": 28, "DS": 43, "DNSKEY": 48, "CAA": 257, "HTTPS": 65}
 
+# Shared-hosting / platform suffixes (Public Suffix List PRIVATE section subset). A target *under* one of these is a
+# customer site on a shared platform: its DNS zone, DNSSEC, CAA, mail DNS, TLS and registry data belong to the platform.
+# If a full PSL file is available (SCAFU_PSL_FILE, or Debian's publicsuffix package) its private section is used too.
+SHARED_SUFFIXES = {"netlify.app", "vercel.app", "github.io", "gitlab.io", "pages.dev", "workers.dev", "herokuapp.com", "web.app",
+                   "firebaseapp.com", "appspot.com", "azurewebsites.net", "azurestaticapps.net", "cloudfront.net", "amplifyapp.com",
+                   "onrender.com", "fly.dev", "up.railway.app", "surge.sh", "glitch.me", "replit.app", "repl.co", "deno.dev",
+                   "webflow.io", "framer.app", "framer.website", "wixsite.com", "squarespace.com", "myshopify.com", "blogspot.com",
+                   "bitbucket.io", "streamlit.app", "lovable.app", "carrd.co", "ngrok-free.app", "ngrok.io"}
+PSL_PATHS = [os.environ.get("SCAFU_PSL_FILE") or "", "/usr/share/publicsuffix/public_suffix_list.dat"]
+# Findings that, on a shared-platform subdomain, describe the platform rather than the customer's site.
+PLATFORM_KEYS = {"no-caa", "spf-missing", "spf-multiple", "spf-plus-all", "spf-neutral", "spf-softfail", "dmarc-missing", "dmarc-none",
+                 "dmarc-quarantine", "no-mta-sts-tlsrpt", "no-dnssec", "weak-tls", "cert-expiring", "domain-expiring", "no-https-redirect"}
+
+def _psl_private():
+    for path in PSL_PATHS:
+        if path and os.path.isfile(path):
+            out, priv = set(), False
+            for line in open(path, encoding="utf-8", errors="replace"):
+                line = line.strip()
+                if "BEGIN PRIVATE DOMAINS" in line: priv = True
+                elif "END PRIVATE DOMAINS" in line: priv = False
+                elif priv and line and not line.startswith("//"): out.add(line.lstrip("*.!").lower())
+            return out
+    return set()
+
+def shared_suffix(domain):
+    """The shared-platform suffix the domain sits *under* (e.g. 'netlify.app' for x.netlify.app), else None."""
+    sfx = SHARED_SUFFIXES | _psl_private(); labels = domain.lower().split(".")
+    for i in range(1, len(labels) - 1):   # strictly below the suffix: 'netlify.app' itself is not "under" it
+        cand = ".".join(labels[i:])
+        if cand in sfx: return cand
+    return None
+
+# Bot-challenge / WAF interstitials. When one of these answers, the response is the CDN's, not the site's.
+CHALLENGE_HEADERS = [("x-vercel-mitigated", r"challenge|deny"), ("cf-mitigated", r"challenge"), ("x-amzn-waf-action", r"challenge|captcha|block"),
+                     ("x-datadome", r"protected"), ("x-sucuri-block", r"."), ("x-akamai-bot", r".")]
+CHALLENGE_BODY = re.compile(r"Vercel Security Checkpoint|<title>\s*Just a moment\.\.\.|cf-chl-|challenge-platform|Attention Required! \| Cloudflare|"
+                            r"captcha-delivery\.com|px-captcha|_Incapsula_Resource|Sucuri WebSite Firewall|Request unsuccessful\. Incapsula|"
+                            r"awswaf|AwsWafIntegration|DDoS protection by", re.I)
+
+def challenge(resp):
+    """Return a short reason if an HTTP response is a bot-challenge/WAF page rather than the site's real response, else None."""
+    if not resp or resp.get("status") is None: return None
+    h = resp.get("headers") or {}
+    for k, pat in CHALLENGE_HEADERS:
+        if h.get(k) and re.search(pat, h[k], re.I): return f"HTTP {resp['status']} with {k}: {h[k][:40]}"
+    m = CHALLENGE_BODY.search(resp.get("body") or "")
+    if m and resp["status"] in (202, 403, 405, 429, 503): return f"HTTP {resp['status']} bot-challenge page ({m.group(0)[:40]})"
+    return None
+
 def checks():
     return json.load(open(os.path.join(HERE, "checks.json")))["required"]
 
@@ -48,15 +98,34 @@ def http_get(url, timeout=15, follow=False, max_bytes=300_000):
 def doh(name, rtype, timeout=10):
     u = "https://dns.google/resolve?" + urllib.parse.urlencode({"name": name, "type": rtype, "do": 1})
     j = json.loads(urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": UA}), timeout=timeout).read())
+    if j.get("Status") not in (0, 3):   # only NOERROR / NXDOMAIN are real answers; SERVFAIL/REFUSED must not look like "no records"
+        raise RuntimeError(f"DoH rcode {j.get('Status')} for {name} {rtype}")
     ans = [a["data"] for a in j.get("Answer", []) if a.get("type") == RTYPES.get(rtype)]
     return {"status": j.get("Status"), "ad": bool(j.get("AD")), "answers": [a.strip('"') if rtype == "TXT" else a for a in ans],
             "txt_raw": ans if rtype == "TXT" else None, "via": "dns.google"}
 
+_DIG_TRUST = {}
+def _dig_trustworthy(timeout=10):
+    """Some sandboxes run a fake-IP DNS proxy (answers in 198.18.0.0/15, empty NOERROR for MX/TXT). Detect it once with a
+    canary name that must not exist; if it resolves, dig results are not used (never report 'no records' from a fake resolver)."""
+    if "ok" not in _DIG_TRUST:
+        try:
+            out = subprocess.run(["dig", "+short", "+time=5", "+tries=1", "scafu-canary-nx-7f3a.example.com", "A"], capture_output=True, text=True, timeout=timeout).stdout
+            _DIG_TRUST["ok"] = not out.strip()
+        except Exception: _DIG_TRUST["ok"] = False
+    return _DIG_TRUST["ok"]
+
 def dig(name, rtype, timeout=10):
     if not shutil.which("dig"): raise RuntimeError("no DoH and dig not installed")
-    out = subprocess.run(["dig", "+short", "+time=5", "+tries=1", name, rtype], capture_output=True, text=True, timeout=timeout).stdout
-    ans = [l.strip() for l in out.splitlines() if l.strip()]
+    if not _dig_trustworthy(timeout): raise RuntimeError("local resolver is synthetic (a canary NXDOMAIN name resolved; fake-IP DNS proxy), so dig results are not trusted")
+    p = subprocess.run(["dig", "+time=5", "+tries=1", "+noall", "+answer", "+comments", name, rtype], capture_output=True, text=True, timeout=timeout)
+    st = re.search(r"status:\s*([A-Z]+)", p.stdout)
+    if p.returncode != 0 or not st or st.group(1) not in ("NOERROR", "NXDOMAIN"):
+        raise RuntimeError(f"dig {name} {rtype}: " + (st.group(1) if st else (p.stderr or p.stdout).strip()[:120] or f"exit {p.returncode}"))
+    ans = [l.split(None, 4)[4].strip() for l in p.stdout.splitlines() if l.strip() and not l.startswith(";") and len(l.split(None, 4)) == 5
+           and l.split(None, 4)[3] == rtype]
     if rtype == "TXT": ans = ["".join(re.findall(r'"((?:[^"\\]|\\.)*)"', a)) or a for a in ans]
+    if any(re.match(r"198\.1[89]\.", x) for x in ans): raise RuntimeError(f"dig {name} {rtype}: synthetic 198.18.0.0/15 answer (fake-IP DNS proxy)")
     return {"status": 0, "ad": None, "answers": ans, "via": "dig"}
 
 def resolve(name, rtype, timeout=10):
@@ -111,12 +180,26 @@ def gather(domain, timeout=15, log=print):
     def step(cid, fn):
         try: fn()
         except Exception as e:
-            raw["errors"][cid] = f"{type(e).__name__}: {e}"[:300]; log(f"  ! {cid}: {raw['errors'][cid]}")
+            raw["errors"][cid] = (str(e) if type(e) is RuntimeError else f"{type(e).__name__}: {e}")[:300]; log(f"  ! {cid}: {raw['errors'][cid]}")
     def dns_set(key, name, rtype):
         r = resolve(name, rtype, timeout); raw["dns"][key] = r; return r
     log(f"[collect] {domain}: DNS")
-    step("dns_records", lambda: [dns_set(t, domain, t) for t in ("A", "AAAA", "MX", "NS", "TXT", "HTTPS")])
-    step("caa", lambda: dns_set("CAA", domain, "CAA"))
+    raw["shared_suffix"] = shared_suffix(domain)
+    def dns_records():   # each type separately, so one failed type is recorded instead of silently looking like "none"
+        raw["dns_errors"] = {}
+        for t in ("A", "AAAA", "MX", "NS", "TXT", "HTTPS"):
+            try: dns_set(t, domain, t)
+            except Exception as e: raw["dns_errors"][t] = f"{type(e).__name__}: {e}"[:200]
+        if len(raw["dns_errors"]) == 6: raise RuntimeError("all record types failed: " + raw["dns_errors"]["A"])
+    step("dns_records", dns_records)
+    def caa():   # RFC 8659: CAA is inherited from the closest ancestor that has one
+        r = dns_set("CAA", domain, "CAA"); raw["caa_climb"] = None
+        labels = domain.split(".")
+        for i in range(1, len(labels) - 1):
+            if r["answers"]: break
+            parent = ".".join(labels[i:]); r2 = resolve(parent, "CAA", timeout)
+            if r2["answers"]: raw["caa_climb"] = {"name": parent, "answers": r2["answers"]}; break
+    step("caa", caa)
     step("spf", lambda: raw["dns"].get("TXT") or dns_set("TXT", domain, "TXT"))
     def dkim():
         raw["dkim"] = {}
@@ -136,17 +219,35 @@ def gather(domain, timeout=15, log=print):
     log("[collect] crt.sh / RDAP")
     def ct():
         last = None
-        for attempt in range(3):   # crt.sh is often briefly overloaded (502/503)
+        for attempt in range(2):   # crt.sh is often briefly overloaded (502/503)
             try:
-                j = json.loads(urllib.request.urlopen(urllib.request.Request(f"https://crt.sh/?q=%25.{urllib.parse.quote(domain)}&output=json", headers={"User-Agent": UA}), timeout=max(timeout, 40)).read()); break
+                j = json.loads(urllib.request.urlopen(urllib.request.Request(f"https://crt.sh/?q=%25.{urllib.parse.quote(domain)}&output=json", headers={"User-Agent": UA}), timeout=max(timeout, 40)).read())
+                names = sorted({n.strip().lower() for c in j for n in str(c.get("name_value", "")).split("\n") if n.strip()})
+                raw["ct"] = {"certificates": len(j), "names": names, "source": "crt.sh"}; return
             except Exception as e:
                 last = e; __import__("time").sleep(3 * (attempt + 1))
-        else: raise last
-        names = sorted({n.strip().lower() for c in j for n in str(c.get("name_value", "")).split("\n") if n.strip()})
-        raw["ct"] = {"certificates": len(j), "names": names}
+        try:   # fallback: Cert Spotter public API (unauthenticated, first page; unexpired certificates only)
+            u = "https://api.certspotter.com/v1/issuances?" + urllib.parse.urlencode({"domain": domain, "include_subdomains": "true", "expand": "dns_names"})
+            j = json.loads(urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": UA}), timeout=max(timeout, 30)).read())
+        except Exception as e2:
+            raise RuntimeError(f"crt.sh failed ({type(last).__name__}: {last}); Cert Spotter failed ({type(e2).__name__}: {e2})")
+        names = sorted({n.strip().lower() for c in j for n in c.get("dns_names", []) if n.strip()})
+        raw["ct"] = {"certificates": len(j), "names": names, "source": "Cert Spotter (crt.sh failed: " + f"{type(last).__name__}: {last}"[:120] + "; unexpired certificates, first page only)"}
     step("ct_subdomains", ct)
     def rdap():
-        r = json.loads(urllib.request.urlopen(urllib.request.Request(f"https://rdap.org/domain/{domain}", headers={"User-Agent": UA, "Accept": "application/rdap+json"}), timeout=timeout).read())
+        if raw["shared_suffix"]:
+            raw["rdap_skip"] = f"not applicable: {domain} is a customer subdomain of the shared platform suffix {raw['shared_suffix']}; registry data belongs to the platform, not the site owner"; return
+        labels, r, tried = domain.split("."), None, []
+        for i in range(0, max(1, len(labels) - 1)):   # subdomain -> walk up to the registered domain
+            name = ".".join(labels[i:])
+            try:
+                r = json.loads(urllib.request.urlopen(urllib.request.Request(f"https://rdap.org/domain/{name}", headers={"User-Agent": UA, "Accept": "application/rdap+json"}), timeout=timeout).read()); break
+            except urllib.error.HTTPError as e:
+                tried.append(f"{name}: HTTP {e.code}")
+                if e.code not in (400, 404): raise
+        if r is None:
+            raw["rdap_skip"] = (f"no RDAP data ({'; '.join(tried)}). The registry for .{labels[-1]} may not publish RDAP (some ccTLDs such as .io do not); "
+                                "verify registrar, expiry and transfer lock via the registry's WHOIS"); return
         ev = {e.get("eventAction"): e.get("eventDate") for e in r.get("events", [])}
         reg = next((e for e in r.get("entities", []) if "registrar" in e.get("roles", [])), {})
         regname = next((v[3] for v in (reg.get("vcardArray") or [None, []])[1] if v and v[0] == "fn"), None)
@@ -156,13 +257,22 @@ def gather(domain, timeout=15, log=print):
     log("[collect] HTTP")
     step("http_headers", lambda: raw.__setitem__("http", http_get(f"https://{domain}/", timeout)))
     if "http" not in raw: raw["errors"].setdefault("fingerprint", "no HTTPS response to fingerprint (" + raw["errors"].get("http_headers", "") + ")")
-    step("https_redirect", lambda: raw.__setitem__("http_plain", {k: v for k, v in http_get(f"http://{domain}/", timeout).items() if k != "body"}))
+    def plain():
+        try:
+            r = http_get(f"http://{domain}/", min(timeout, 10)); r["body"] = r["body"][:2000]; raw["http_plain"] = r
+        except Exception as e:
+            ctl = os.environ.get("SCAFU_PORT80_CONTROL", "example.com")   # one TCP connect to a neutral host: is port 80 egress blocked HERE?
+            try: socket.create_connection((ctl, 80), timeout=5).close(); note = f"control {ctl}:80 reachable, so the target did not answer on port 80"
+            except Exception: note = f"control {ctl}:80 also unreachable, so outbound port 80 is likely blocked from this collector; this is not evidence about the target"
+            raise RuntimeError(f"{type(e).__name__}: {e}"[:160] + f" [{note}]")
+    step("https_redirect", plain)
     def files():
         raw["files"] = {}
         for path in ("/robots.txt", "/.well-known/security.txt", "/security.txt"):
             try:
                 r = http_get(f"https://{domain}{path}", timeout, follow=True, max_bytes=50_000)
-                raw["files"][path] = {"status": r["status"], "content_type": r["headers"].get("content-type", ""), "body": r["body"][:5000]}
+                raw["files"][path] = {"status": r["status"], "content_type": r["headers"].get("content-type", ""), "body": r["body"][:5000],
+                                      "headers": {k: v for k, v in r["headers"].items() if k in dict(CHALLENGE_HEADERS) or k == "server"}}
             except Exception as e:
                 raw["files"][path] = {"status": None, "error": str(e)[:200]}
         if all(v.get("status") is None for v in raw["files"].values()): raise RuntimeError("all file requests failed: " + raw["files"]["/robots.txt"].get("error", ""))
@@ -189,25 +299,39 @@ def analyze(raw, now=None):
         F.append(dict(key=key, severity=sev, title=title, description=desc, evidence=ev, impact=imp, remediation=rem, **kw))
     ans = lambda k: (dns.get(k) or {}).get("answers") or []
     mx_real = [m for m in ans("MX") if not re.fullmatch(r"0\s+\.?", m.strip())]   # RFC 7505 null MX = no mail
+    dns_err = raw.get("dns_errors") or {}
+    mx_known = "MX" in dns and "MX" not in dns_err
+    shared = raw["shared_suffix"] if "shared_suffix" in raw else shared_suffix(d)
+    handled = set()   # failed checks that already have a specific 'unverified' entry
     for cid in err: failed(cid, err[cid])
 
     # --- dns_records
     if "dns_records" not in err:
-        ok("dns_records", f"A {len(ans('A'))}, AAAA {len(ans('AAAA'))}, MX {len(ans('MX'))}, NS {len(ans('NS'))}, TXT {len(ans('TXT'))} (via {dns.get('A', {}).get('via', '?')})")
+        counts = f"A {len(ans('A'))}, AAAA {len(ans('AAAA'))}, MX {len(ans('MX'))}, NS {len(ans('NS'))}, TXT {len(ans('TXT'))} (via {dns.get('A', {}).get('via', '?')})"
+        if dns_err:   # partial: never report a failed lookup as "no records"
+            failed("dns_records", "partial: " + "; ".join(f"{t} lookup failed ({e})" for t, e in dns_err.items()) + ". Observed: " + counts)
+            U.append({"item": "DNS " + ", ".join(dns_err), "reason": "These record types could not be resolved, so their absence is not confirmed.", "confirm": "re-run the collector or query the records with dig."})
+            handled.add("dns_records")
+        else: ok("dns_records", counts)
     # --- caa
     if "caa" not in err:
-        caa = ans("CAA"); ok("caa", f"{len(caa)} CAA record(s)")
+        caa = ans("CAA"); climb = raw.get("caa_climb")
+        if not caa and climb:
+            ok("caa", f"0 CAA records at {d}; inherited from {climb['name']} (RFC 8659): " + "; ".join(climb["answers"][:4]))
+            S.append({"title": "CAA records", "detail": f"Certificate issuance is restricted by CAA inherited from {climb['name']}: " + "; ".join(climb["answers"][:4])})
+        else: ok("caa", f"{len(caa)} CAA record(s)" + (" (none at any parent either)" if not caa else ""))
         if caa: S.append({"title": "CAA records", "detail": "Certificate issuance is restricted: " + "; ".join(caa[:4])})
+        elif climb: pass   # inherited CAA counts as published
         else: find("no-caa", "low", "No CAA records", "No CAA records are published, so any public CA may issue certificates for the domain.",
                    f"{d} CAA  →  (none)", "Any public CA may issue for the domain; CAA restricts issuance to the CAs actually in use.",
                    ["Publish CAA records for the CAs you use (e.g. letsencrypt.org, pki.goog).", "Add an iodef contact."])
     # --- spf
     if "spf" not in err and "dns_records" not in err or (dns.get("TXT") and "spf" not in err):
         spf = [t for t in ans("TXT") if t.lower().startswith("v=spf1")]
-        mx = mx_real
+        mx = mx_real or not mx_known   # MX unknown -> assume mail may be in use (do not downgrade)
         if not spf:
             ok("spf", "no SPF record")
-            find("spf-missing", "medium" if mx else "low", "No SPF record", "The domain publishes no SPF record" + ("" if mx else " (no MX either; a v=spf1 -all record stops spoofing of a non-mail domain)") + ".",
+            find("spf-missing", "medium" if mx else "low", "No SPF record", "The domain publishes no SPF record" + ("" if mx_real else " (MX could not be determined)" if not mx_known else " (no MX either; a v=spf1 -all record stops spoofing of a non-mail domain)") + ".",
                  f"{d} TXT  →  no v=spf1 record", "Receivers cannot tell which servers may send mail for the domain, which makes spoofing easier.",
                  ["Publish an SPF record listing your senders, ending in -all." if mx else "Publish \"v=spf1 -all\" if the domain sends no mail."])
         elif len(spf) > 1:
@@ -251,7 +375,8 @@ def analyze(raw, now=None):
     # --- mta-sts / tls-rpt
     if "mta_sts_tlsrpt" not in err:
         sts = [t for t in ans("_mta-sts") if "v=stsv1" in t.lower()]; rpt = [t for t in ans("_smtp._tls") if "v=tlsrptv1" in t.lower()]
-        ok("mta_sts_tlsrpt", f"MTA-STS {'present' if sts else 'absent'}, TLS-RPT {'present' if rpt else 'absent'}")
+        if mx_known: ok("mta_sts_tlsrpt", f"MTA-STS {'present' if sts else 'absent'}, TLS-RPT {'present' if rpt else 'absent'}")
+        else: skipped("mta_sts_tlsrpt", f"MTA-STS {'present' if sts else 'absent'}, TLS-RPT {'present' if rpt else 'absent'}; MX lookup failed, so whether the domain receives mail is unknown and no finding was raised")
         if mx_real and (not sts or not rpt):
             miss = " and ".join(x for x, v in (("MTA-STS", sts), ("TLS-RPT", rpt)) if not v)
             find("no-mta-sts-tlsrpt", "low", f"No {miss}", f"The domain receives mail but publishes no {miss} record.",
@@ -297,12 +422,18 @@ def analyze(raw, now=None):
         if unk: U.append({"item": "TLS versions: " + ", ".join(unk), "reason": "The scanning client could not test these versions.", "confirm": "check the minimum TLS version setting on the server or CDN."})
     # --- ct
     if "ct_subdomains" not in err and raw.get("ct") is not None:
-        n = raw["ct"]["names"]; ok("ct_subdomains", f"{raw['ct']['certificates']} certificates, {len(n)} unique names")
+        n = raw["ct"]["names"]; ok("ct_subdomains", f"{raw['ct']['certificates']} certificates, {len(n)} unique names (via {raw['ct'].get('source', 'crt.sh')})")
         if n: find("ct-names", "info", "Names in Certificate Transparency logs", f"{len(n)} unique names appear in CT logs for {d}.", "\n".join(n[:40]) + (f"\n… and {len(n) - 40} more" if len(n) > 40 else ""),
                    "None directly; CT logs are public and show which hostnames exist.", ["Review the list for forgotten hosts."])
     # --- http headers
     h = (raw.get("http") or {}).get("headers") or {}
-    if "http_headers" not in err and raw.get("http"):
+    ch = challenge(raw.get("http")) if "http_headers" not in err else None
+    if ch:
+        failed("http_headers", f"GET https://{d}/ → {ch}; this is a bot-challenge/WAF page, so the site's real response headers were not observed"); handled.add("http_headers")
+        for item in ("HSTS (Strict-Transport-Security)", "Content-Security-Policy", "Other security headers"):
+            U.append({"item": item, "reason": f"GET https://{d}/ returned a bot-challenge/WAF page ({ch}), not the site's real response.",
+                      "confirm": "check the header on a normal browser response (DevTools → Network), or attach a reviewed copy captured from a browser."})
+    elif "http_headers" not in err and raw.get("http"):
         ok("http_headers", f"GET https://{d}/ → {raw['http']['status']}")
         hsts = h.get("strict-transport-security")
         if not hsts: find("missing-hsts", "medium", "No HSTS (Strict-Transport-Security) header", f"The HTTPS response to https://{d}/ carries no Strict-Transport-Security header.",
@@ -326,7 +457,11 @@ def analyze(raw, now=None):
             find("acao-wildcard", "low", "Access-Control-Allow-Origin: * on HTML pages", "The homepage sends a wildcard ACAO header.", f"GET https://{d}/\nAccess-Control-Allow-Origin: *",
                  "Low impact unless credentialed APIs share the origin.", ["Restrict or remove ACAO on HTML responses."])
     # --- https redirect
-    if "https_redirect" not in err and raw.get("http_plain"):
+    chp = challenge(raw.get("http_plain")) if "https_redirect" not in err else None
+    if chp:
+        failed("https_redirect", f"GET http://{d}/ → {chp}; bot-challenge/WAF page, redirect behaviour not observed")
+        U.append({"item": "HTTP→HTTPS redirect", "reason": f"Plain-HTTP request was answered by a bot-challenge/WAF page ({chp}).", "confirm": "check that HTTP requests are redirected to HTTPS."})
+    elif "https_redirect" not in err and raw.get("http_plain"):
         p = raw["http_plain"]; loc = p.get("location") or ""
         ok("https_redirect", f"GET http://{d}/ → {p['status']} {loc}".strip())
         if 300 <= (p["status"] or 0) < 400 and loc.lower().startswith("https://"): S.append({"title": "HTTPS redirect", "detail": f"Plain HTTP redirects to {loc}."})
@@ -337,17 +472,25 @@ def analyze(raw, now=None):
     # --- robots / security.txt
     if "robots_security_txt" not in err and raw.get("files") is not None:
         fl = raw["files"]; st = lambda p: (fl.get(p) or {}).get("status")
-        sec = next((p for p in ("/.well-known/security.txt", "/security.txt") if st(p) == 200 and "contact:" in (fl[p].get("body") or "").lower()), None)
-        ok("robots_security_txt", f"robots.txt {st('/robots.txt')}, /.well-known/security.txt {st('/.well-known/security.txt')}, /security.txt {st('/security.txt')}")
+        chf = {p: challenge(v) for p, v in fl.items() if challenge(v)}
+        sec = next((p for p in ("/.well-known/security.txt", "/security.txt") if st(p) == 200 and "contact:" in (fl[p].get("body") or "").lower() and p not in chf), None)
+        sec_blocked = not sec and all(p in chf or st(p) is None for p in ("/.well-known/security.txt", "/security.txt"))
+        summary = ", ".join(f"{p.lstrip('/') if p == '/robots.txt' else p} {st(p)}" + (" (challenge)" if p in chf else "") for p in ("/robots.txt", "/.well-known/security.txt", "/security.txt"))
+        if len(chf) == len(fl):
+            failed("robots_security_txt", summary + f"; every request was answered by a bot-challenge/WAF page ({next(iter(chf.values()))})"); handled.add("robots_security_txt")
+        else: ok("robots_security_txt", summary)
+        if chf: U.append({"item": "robots.txt / security.txt", "reason": "Answered by a bot-challenge/WAF page: " + ", ".join(chf) + ".", "confirm": "open the path in a normal browser or attach a reviewed copy."})
         if sec: S.append({"title": "security.txt", "detail": f"Published at {sec}."})
+        elif sec_blocked: pass   # both security.txt paths challenged: unverified, not a finding
         else: find("no-security-txt", "low", "No security.txt", "No RFC 9116 security.txt with a Contact field is published.",
                    f"GET /.well-known/security.txt  →  {st('/.well-known/security.txt')}\nGET /security.txt              →  {st('/security.txt')}",
                    "There is no published contact for reporting security issues.", ["Publish /.well-known/security.txt with Contact and Expires fields."])
-        rb = (fl.get("/robots.txt") or {}).get("body", "") if st("/robots.txt") == 200 else ""
+        rb = (fl.get("/robots.txt") or {}).get("body", "") if st("/robots.txt") == 200 and "/robots.txt" not in chf else ""
         sens = sorted({m for m in re.findall(r"(?im)^\s*disallow:\s*(\S+)", rb) if re.search(r"admin|backup|private|secret|\.git|\.env|config|db|sql", m, re.I)})
         if sens: find("robots-sensitive", "info", "robots.txt names sensitive-looking paths", "robots.txt lists paths that hint at sensitive content. They were not requested.",
                       "\n".join(f"Disallow: {x}" for x in sens[:20]), "Discloses path names to anyone who reads robots.txt.", ["Do not rely on robots.txt for secrecy; protect or remove these paths."])
     # --- rdap
+    if "rdap" not in err and raw.get("rdap_skip"): skipped("rdap", raw["rdap_skip"])
     if "rdap" not in err and raw.get("rdap"):
         r = raw["rdap"]; ok("rdap", f"registrar {r.get('registrar')}, status {', '.join(r.get('status', []))}, expires {r.get('events', {}).get('expiration')}")
         if any("transfer prohibited" in s.lower() or "transferprohibited" in s.lower().replace(" ", "") for s in r.get("status", [])):
@@ -361,11 +504,11 @@ def analyze(raw, now=None):
     # --- fingerprint
     if "fingerprint" not in err:
         if raw.get("http"):
-            body = raw["http"].get("body") or ""
+            body = "" if ch else (raw["http"].get("body") or "")   # a challenge page's markup is the CDN's, not the site's
             fp = {k: h[k] for k in ("server", "x-powered-by", "x-generator", "via") if h.get(k)}
             gen = re.search(r'<meta[^>]+name=["\']generator["\'][^>]+content=["\']([^"\']+)', body, re.I)
             if gen: fp["meta generator"] = gen.group(1)
-            ok("fingerprint", "; ".join(f"{k}: {v}" for k, v in fp.items()) or "no technology headers")
+            ok("fingerprint", ("; ".join(f"{k}: {v}" for k, v in fp.items()) or "no technology headers") + (" (headers of the bot-challenge response only; the page itself was not observed)" if ch else ""))
             if fp: find("fingerprint", "info", "Technology fingerprint", "Technology identifiers seen in the homepage response. No CVE matching was performed.",
                         "\n".join(f"{k}: {v}" for k, v in fp.items()), "None directly.", ["Optionally suppress version details in headers."])
             ver = [f"{k}: {v}" for k, v in fp.items() if re.search(r"/\d+(\.\d+)+|\b\d+\.\d+\.\d+\b", v)]
@@ -376,8 +519,16 @@ def analyze(raw, now=None):
     for cid, nm in names.items():
         if cid not in log: skipped(cid, "not evaluated (dependency failed)")
     for cid, c in log.items():
-        if c["status"] == "failed" and cid not in ("https_redirect",):
+        if c["status"] == "failed" and cid not in ("https_redirect",) and cid not in handled:
             U.append({"item": names[cid], "reason": "Check failed: " + c["detail"], "confirm": "re-run the collector or verify manually."})
+    if shared:   # customer site on a shared platform: platform-controlled items are reported but not graded
+        for f in F:
+            if f["key"] in PLATFORM_KEYS and f["severity"] != "info":
+                f["title"] = "Platform-level: " + f["title"]
+                f["description"] += (f" {d} is a customer subdomain of the shared platform suffix {shared}; this is controlled by the platform, "
+                                     "not the site owner, so it is reported as info and not graded.")
+                f["impact"] = f"Platform-level (was {f['severity']} if the owner controlled it). " + f["impact"]
+                f["severity"] = "info"
     for f in F:
         if f["key"] in ACTIONS: f["action"] = ACTIONS[f["key"]]
     order = [c["id"] for c in checks()]
@@ -403,7 +554,13 @@ def draft(raw, authorized_by=None, now=None):
         "check_log": log, "findings": F, "strengths": S, "unverified": U,
         "limitations": ["This was a passive assessment only; issues that only appear under active testing are out of scope.",
                         "DKIM is checked only at common selectors; a custom selector may exist.",
-                        f"Results reflect the state observed at {raw.get('collected_at')}."],
+                        f"Results reflect the state observed at {raw.get('collected_at')}."] +
+                       ([f"Target is a subdomain of {raw.get('shared_suffix') or shared_suffix(d)}, a shared-platform (Public Suffix List private) suffix. DNS zone, DNSSEC, CAA, "
+                         "email-auth DNS, TLS and registry data are controlled by the platform, not the site owner; those items are reported as "
+                         "platform-level info and not graded."] if raw.get("shared_suffix", shared_suffix(d)) else []) +
+                       (["One or more HTTP checks were answered by a bot-challenge/WAF page. Those checks are marked failed and their items unverified; "
+                         "confirm them from a normal browser session (a reviewed copy) before drawing conclusions."]
+                        if challenge(raw.get("http")) or any(challenge(v) for v in (raw.get("files") or {}).values()) else []),
         "appendix": app}
 
 def main():
