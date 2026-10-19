@@ -14,6 +14,10 @@ Sections appear only when there is data for them. It works with anything from 0 
 > ### ⚠️ Authorized, passive use only
 > Only use this on targets **you own or are explicitly authorized in writing to assess**. The workflow it is designed for is **passive and non-intrusive** (public DNS/RDAP/CT lookups, single TLS handshakes, ordinary GET/HEAD requests to public pages). It is not for brute force, port scanning, exploitation or authenticated testing. Findings inferred from version strings or fingerprints (for example CVE matches) are required to be marked `basis: "inferred"`, are labelled **POTENTIAL** and are capped at medium severity.
 
+## Install
+
+Fresh Grok Bot box or Debian/Ubuntu machine: see **[INSTALL.md](INSTALL.md)** (clone path, dependencies, offline tests, first run, WAF reviewed-copy workflow). Bot recipes for a published Grok Bot template (setup, run a report, leak hunt, tech stack, routes and forms, getting started) are in [`bot-skills/`](bot-skills/).
+
 ## One command
 
 (Files cloned through the GitHub API are not executable, so use `bash scafu.sh`, or run `chmod +x scafu.sh run_tests.sh` once and then call `./scafu.sh`.)
@@ -29,7 +33,7 @@ bash scafu.sh yourdomain.com --allow-incomplete # render even if required checks
 2. `validate.py` checks the schema and the required-coverage gate.
 3. `gen.py` writes the HTML, PDF and previews.
 
-The default output folder is `reports/<domain>/`. Network failures are logged in the report's *Assessment coverage* table instead of stopping the run. **The findings are a draft:** review them and set `authorized_by` before you share a report.
+The default output folder is `reports/<domain>/`. Bot-challenge/WAF pages, partial DNS answers, synthetic local resolvers, shared hosting suffixes (`*.netlify.app` etc.), RDAP gaps and a blocked port 80 are detected and reported as failed/skipped/unverified or platform-level info instead of as findings (see schema.md, *Honesty rules*). Network failures are logged in the report's *Assessment coverage* table instead of stopping the run. **The findings are a draft:** review them and set `authorized_by` before you share a report.
 
 ## Setup
 
@@ -89,6 +93,8 @@ brand.json        default SCAFU brand
 schema.md         schema + rubric documentation
 build/*.b64       embedded fonts (base64 text), licences in build/licenses/
 examples/         EXAMPLE DATA inputs
+INSTALL.md        install + first run + WAF reviewed-copy guide
+bot-skills/       portable Grok Bot skill recipes (no secrets, no SRG-specific targets)
 tests/            pytest suite (fixture-based rule tests, no network except the optional live test); run_tests.sh runs it
 ```
 
